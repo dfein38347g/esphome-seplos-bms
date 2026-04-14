@@ -119,10 +119,16 @@ bool SeplosModbus::parse_seplos_modbus_byte_(uint8_t byte) {
     data.push_back(ascii_hex_to_byte(raw[i], raw[i + 1]));
   }
 
+  ESP_LOGVV(TAG, "Decoded frame data: %s", format_hex_pretty(&data.front(), data.size()).c_str());
+  ESP_LOGVV(TAG, "data[0]=0x%02X (VER), data[1]=0x%02X (ADDR)", data[0], data[1]);
+
   uint8_t address = data[1];
+
+  ESP_LOGVV(TAG, "Received frame for address 0x%02X (data[0]=0x%02X)", address, data[0]);
 
   bool found = false;
   for (auto *device : this->devices_) {
+    ESP_LOGVV(TAG, "Checking device address 0x%02X", device->address_);
     if (device->address_ == address) {
       device->on_seplos_modbus_data(data);
       found = true;

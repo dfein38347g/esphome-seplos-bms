@@ -17,6 +17,17 @@ void SeplosBms::on_seplos_modbus_data(const std::vector<uint8_t> &data) {
   // 14             77           142 (0x8E)
   // 15             79           146 (0x92)
   // 16             81           150 (0x96)
+  // Midnite Power MNPowerflo16 uses address 0x01, CID1 0x4F (instead of 0x46)
+  // Standard format: [VER(1)][ADDR(1)][CID1(1)][CID2(1)][LCHKSUM(1)][LEN(1)][data...]
+  // For Midnite: data[0]=0x01(VER), data[1]=0x01(ADDR), data[2]=0x4F(CID1), data[3]=0x42(CID2), data[4-5]=header, data[6]=flag, data[7]=cmd_grp, data[8]=num_cells
+  // For standard Seplos: data[0]=0x20(VER), data[1]=0x00(ADDR), data[2]=0x46(CID1), data[3]=0x00(CID2), data[4-5]=header, data[6]=flag, data[7]=cmd_grp, data[8]=num_cells
+  if (data.size() >= 9) {
+    uint8_t num_cells = data[8];
+    if (num_cells >= 8 && num_cells <= 16) {
+      this->on_telemetry_data_(data);
+      return;
+    }
+  }
   if (data.size() >= 44 && data[8] >= 8 && data[8] <= 16) {
     this->on_telemetry_data_(data);
     return;
