@@ -157,11 +157,17 @@ void SeplosModbus::send(uint8_t protocol_version, uint8_t address, uint8_t funct
   if (this->flow_control_pin_ != nullptr)
     this->flow_control_pin_->digital_write(true);
 
+  uint8_t cid1 = 0x46;
+  if (protocol_version == 0x26) {
+    cid1 = 0x4F;
+  }
+  ESP_LOGD(TAG, "Using protocol 0x%02X, CID1: 0x%02X", protocol_version, cid1);
+
   const uint16_t lenid = lchksum(1 * 2);
   std::vector<uint8_t> data;
   data.push_back(protocol_version);  // VER
   data.push_back(address);           // ADDR
-  data.push_back(0x46);              // CID1
+  data.push_back(cid1);             // CID1 (0x46 for Seplos, 0x4F for TDT/Midnite)
   data.push_back(function);          // CID2 (0x42)
   data.push_back(lenid >> 8);        // LCHKSUM (0xE0)
   data.push_back(lenid >> 0);        // LENGTH (0x02)
