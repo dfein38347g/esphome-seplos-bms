@@ -84,15 +84,16 @@ bool SeplosModbus::parse_seplos_modbus_byte_(uint8_t byte) {
   this->rx_buffer_.push_back(byte);
   const uint8_t *raw = &this->rx_buffer_[0];
 
+  ESP_LOGV(TAG, "RX byte[%zu]: 0x%02X (%c)", at, byte,
+           (byte >= 0x20 && byte <= 0x7E) ? byte : '.');
+
   // Start of frame
   if (at == 0) {
     if (raw[0] != 0x7E) {
-      ESP_LOGW(TAG, "Invalid header: 0x%02X", raw[0]);
-
-      // return false to reset buffer
+      ESP_LOGW(TAG, "Invalid header: 0x%02X (expected 0x7E '~')", raw[0]);
       return false;
     }
-
+    ESP_LOGV(TAG, "Start of frame detected (0x7E)");
     return true;
   }
 
@@ -100,46 +101,59 @@ bool SeplosModbus::parse_seplos_modbus_byte_(uint8_t byte) {
   if (raw[at] != 0x0D)
     return true;
 
+  ESP_LOGI(TAG, "End of frame detected (0x0D), total bytes: %zu", at + 1);
+  ESP_LOGV(TAG, "Raw frame (hex): %s",
+           format_hex_pretty(&this->rx_buffer_.front(), this->rx_buffer_.size()).c_str());
+
   if (at > MAX_RESPONSE_SIZE) {
-    ESP_LOGW(TAG, "Maximum response size exceeded. Flushing RX buffer...");
+    ESP_LOGW(TAG, "Maximum response size exceeded (%zu > %d). Flushing RX buffer...",
+             at, MAX_RESPONSE_SIZE);
     return false;
   }
 
   uint16_t data_len = at - 4 - 1;
+  ESP_LOGV(TAG, "Data length (ASCII chars): %d", data_len);
+
   uint16_t computed_crc = chksum(raw + 1, data_len);
   uint16_t remote_crc = uint16_t(ascii_hex_to_byte(raw[at - 4], raw[at - 3])) << 8 |
                         (uint16_t(ascii_hex_to_byte(raw[at - 2], raw[at - 1])) << 0);
+
+  ESP_LOGV(TAG, "CRC check: computed=0x%04X, remote=0x%04X", computed_crc, remote_crc);
+
   if (computed_crc != remote_crc) {
     ESP_LOGW(TAG, "CRC check failed! 0x%04X != 0x%04X", computed_crc, remote_crc);
     return false;
   }
+  ESP_LOGV(TAG, "CRC check passed");
 
   std::vector<uint8_t> data;
   for (uint16_t i = 1; i < data_len; i = i + 2) {
     data.push_back(ascii_hex_to_byte(raw[i], raw[i + 1]));
   }
 
-  ESP_LOGVV(TAG, "Decoded frame data: %s", format_hex_pretty(&data.front(), data.size()).c_str());
-  ESP_LOGVV(TAG, "data[0]=0x%02X (VER), data[1]=0x%02X (ADDR)", data[0], data[1]);
+  ESP_LOGI(TAG, "Decoded frame (%zu bytes): %s", data.size(),
+           format_hex_pretty(&data.front(), data.size()).c_str());
+  ESP_LOGI(TAG, "Frame fields: VER=0x%02X, ADDR=0x%02X, CID1=0x%02X, CID2=0x%02X, "
+                "LCHKSUM=0x%02X, LEN=0x%02X (%d bytes payload)",
+           data[0], data[1], data[2], data[3], data[4], data[5], data[5]);
 
   uint8_t address = data[1];
-
-  ESP_LOGVV(TAG, "Received frame for address 0x%02X (data[0]=0x%02X)", address, data[0]);
+  ESP_LOGV(TAG, "Looking for device at address 0x%02X", address);
 
   bool found = false;
   for (auto *device : this->devices_) {
-    ESP_LOGVV(TAG, "Checking device address 0x%02X", device->address_);
+    ESP_LOGV(TAG, "Checking registered device at address 0x%02X", device->address_);
     if (device->address_ == address) {
+      ESP_LOGI(TAG, "Found device at address 0x%02X, dispatching data", address);
       device->on_seplos_modbus_data(data);
       found = true;
     }
   }
 
   if (!found) {
-    ESP_LOGW(TAG, "Got SeplosModbus frame from unknown address 0x%02X! ", address);
+    ESP_LOGW(TAG, "No device registered at address 0x%02X", address);
   }
 
-  // return false to reset buffer
   return false;
 }
 
@@ -161,7 +175,8 @@ void SeplosModbus::send(uint8_t protocol_version, uint8_t address, uint8_t funct
   if (protocol_version == 0x26) {
     cid1 = 0x4F;
   }
-  ESP_LOGD(TAG, "Using protocol 0x%02X, CID1: 0x%02X", protocol_version, cid1);
+  ESP_LOGI(TAG, "Sending: protocol=0x%02X, addr=0x%02X, cid1=0x%02X, cid2=0x%02X, value=0x%02X",
+           protocol_version, address, cid1, function, value);
 
   const uint16_t lenid = lchksum(1 * 2);
   std::vector<uint8_t> data;
@@ -184,7 +199,8 @@ void SeplosModbus::send(uint8_t protocol_version, uint8_t address, uint8_t funct
   payload.append(byte_to_ascii_hex(data.data() + frame_len, data.size() - frame_len));  // Append checksum
   payload.append("\r");                                                                 // EOF (0x0D)
 
-  ESP_LOGD(TAG, "Send frame: %s", payload.c_str());
+  ESP_LOGI(TAG, "TX frame (ASCII): %s", payload.c_str());
+  ESP_LOGV(TAG, "TX frame (hex): %s", format_hex_pretty((const uint8_t *)payload.data(), payload.size()).c_str());
 
   this->write_str(payload.c_str());
   this->flush();
